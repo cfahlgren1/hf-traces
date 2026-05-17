@@ -2,49 +2,83 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 CODEX_HOOK_PATH = Path.home() / ".codex" / "hooks.json"
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
-CODEX_STOP_COMMAND = "hf traces hook codex stop"
-CLAUDE_STOP_COMMAND = "hf traces hook claude stop"
-GIT_POST_COMMIT_COMMAND = "hf traces hook git post-commit"
 MANAGED_START = "# >>> hf-traces"
 MANAGED_END = "# <<< hf-traces"
 
 
+def hook_entrypoint() -> str:
+    argv0 = Path(sys.argv[0] or "").resolve()
+    if argv0.name in {"hf-traces", "hf-traces.exe"} and argv0.exists():
+        return str(argv0)
+
+    on_path = shutil.which("hf-traces")
+    if on_path:
+        return on_path
+
+    return "hf traces"
+
+
+def hook_command(*args: str) -> str:
+    entrypoint = hook_entrypoint()
+    if entrypoint.startswith("/"):
+        return " ".join([shlex.quote(entrypoint), *args])
+    return " ".join([entrypoint, *args])
+
+
+def codex_stop_command() -> str:
+    return hook_command("hook", "codex", "stop")
+
+
+def claude_stop_command() -> str:
+    return hook_command("hook", "claude", "stop")
+
+
+def git_post_commit_command() -> str:
+    return hook_command("hook", "git", "post-commit")
+
+
 def install_codex_hook(dry_run: bool = False) -> str:
     return install_json_hook(
-        CODEX_HOOK_PATH, "Stop", CODEX_STOP_COMMAND, dry_run=dry_run
+        CODEX_HOOK_PATH, "Stop", codex_stop_command(), dry_run=dry_run
     )
 
 
 def install_claude_hook(dry_run: bool = False) -> str:
     return install_json_hook(
-        CLAUDE_SETTINGS_PATH, "Stop", CLAUDE_STOP_COMMAND, dry_run=dry_run
+        CLAUDE_SETTINGS_PATH, "Stop", claude_stop_command(), dry_run=dry_run
     )
 
 
 def uninstall_codex_hook(dry_run: bool = False) -> str:
-    return uninstall_json_hook(CODEX_HOOK_PATH, CODEX_STOP_COMMAND, dry_run=dry_run)
+    return uninstall_json_hook(CODEX_HOOK_PATH, "hook codex stop", dry_run=dry_run)
 
 
 def uninstall_claude_hook(dry_run: bool = False) -> str:
     return uninstall_json_hook(
-        CLAUDE_SETTINGS_PATH, CLAUDE_STOP_COMMAND, dry_run=dry_run
+        CLAUDE_SETTINGS_PATH, "hook claude stop", dry_run=dry_run
     )
 
 
 def install_json_hook(
     path: Path, event: str, command: str, dry_run: bool = False
 ) -> str:
+    suffix = hook_suffix(command)
     data = read_json_file(path)
     if json_has_command(data, command):
         return f"keep existing hook {path}"
+
+    remove_json_command(data, suffix)
 
     data.setdefault("hooks", {}).setdefault(event, []).append(
         {
@@ -62,13 +96,21 @@ def install_json_hook(
     return f"install hook {path}"
 
 
-def uninstall_json_hook(path: Path, command: str, dry_run: bool = False) -> str:
+def uninstall_json_hook(path: Path, suffix: str, dry_run: bool = False) -> str:
     data = read_json_file(path)
-    changed = remove_json_command(data, command)
+    changed = remove_json_command(data, suffix)
     if changed and not dry_run:
         write_json_file(path, data)
     action = "remove hook" if changed else "keep missing hook"
     return f"{action} {path}"
+
+
+def hook_suffix(command: str) -> str:
+    marker = " hook "
+    index = command.find(marker)
+    if index == -1:
+        return command
+    return command[index + 1 :]
 
 
 def install_git_hook(scope: str, note_ref: str, dry_run: bool = False) -> list[str]:
@@ -92,6 +134,18 @@ def install_git_hook(scope: str, note_ref: str, dry_run: bool = False) -> list[s
         if not dry_run:
             run(["git", "config", "--global", "core.hooksPath", hooks_dir])
         results.append(f"set global core.hooksPath {hooks_dir}")
+
+    if scope == "global":
+        effective_hook_path = effective_post_commit_path()
+        if effective_hook_path and effective_hook_path != hook_path:
+            results.append(
+                install_managed_block(
+                    effective_hook_path,
+                    managed_git_block(),
+                    "#!/usr/bin/env sh\nset -eu\n",
+                    dry_run=dry_run,
+                )
+            )
 
     config_args = ["git", "config"]
     if scope == "global":
@@ -128,10 +182,10 @@ def uninstall_git_hook(scope: str, dry_run: bool = False) -> str:
 def check_status(note_ref: str, git_scope: str = "global") -> dict[str, bool]:
     status = {
         "codex stop hook": json_has_command(
-            read_json_file(CODEX_HOOK_PATH), CODEX_STOP_COMMAND
+            read_json_file(CODEX_HOOK_PATH), codex_stop_command()
         ),
         "claude stop hook": json_has_command(
-            read_json_file(CLAUDE_SETTINGS_PATH), CLAUDE_STOP_COMMAND
+            read_json_file(CLAUDE_SETTINGS_PATH), claude_stop_command()
         ),
     }
 
@@ -143,6 +197,9 @@ def check_status(note_ref: str, git_scope: str = "global") -> dict[str, bool]:
         refs = run(["git", "config", "--get-all", "notes.displayRef"], check=False)
     else:
         hook_path, _created_global_path = global_post_commit_path()
+        effective_hook_path = effective_post_commit_path()
+        if effective_hook_path and effective_hook_path != hook_path:
+            hook_path = effective_hook_path
         refs = run(
             ["git", "config", "--global", "--get-all", "notes.displayRef"],
             check=False,
@@ -181,7 +238,7 @@ def json_has_command(data: dict[str, Any], command: str) -> bool:
     return False
 
 
-def remove_json_command(data: dict[str, Any], command: str) -> bool:
+def remove_json_command(data: dict[str, Any], suffix: str) -> bool:
     hooks = data.get("hooks", {})
     if not isinstance(hooks, dict):
         return False
@@ -194,7 +251,9 @@ def remove_json_command(data: dict[str, Any], command: str) -> bool:
         for group in groups:
             group_hooks = group.get("hooks", [])
             next_hooks = [
-                hook for hook in group_hooks if hook.get("command") != command
+                hook
+                for hook in group_hooks
+                if not str(hook.get("command", "")).endswith(suffix)
             ]
             if len(next_hooks) != len(group_hooks):
                 changed = True
@@ -228,6 +287,20 @@ def local_post_commit_path() -> Path:
         ]
     )
     return Path(result.stdout.strip())
+
+
+def effective_post_commit_path() -> Optional[Path]:
+    result = run(["git", "config", "--get", "core.hooksPath"], check=False)
+    configured = result.stdout.strip()
+    if not configured:
+        return None
+
+    path = Path(os.path.expanduser(configured))
+    if not path.is_absolute():
+        root = run(["git", "rev-parse", "--show-toplevel"], check=False).stdout.strip()
+        if root:
+            path = Path(root) / path
+    return path / "post-commit"
 
 
 def install_managed_block(
@@ -286,11 +359,19 @@ def file_has_managed_block(path: Path) -> bool:
 
 
 def managed_git_block() -> str:
+    command = git_post_commit_command()
+    entrypoint = hook_entrypoint()
+    guard = (
+        f"[ -x {shlex.quote(entrypoint)} ]"
+        if entrypoint.startswith("/")
+        else "command -v hf >/dev/null 2>&1"
+    )
+
     return "\n".join(
         [
             MANAGED_START,
-            "if command -v hf >/dev/null 2>&1; then",
-            f"  {GIT_POST_COMMIT_COMMAND}",
+            f"if {guard}; then",
+            f"  {command}",
             "fi",
             MANAGED_END,
         ]
