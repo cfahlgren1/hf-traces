@@ -258,9 +258,18 @@ def remove_managed_block(path: Path, dry_run: bool = False) -> bool:
 
 def replace_managed_block(current: str, block: str) -> str:
     stripped = strip_managed_block(current).rstrip()
-    if stripped:
-        return f"{stripped}\n\n{block}\n"
-    return f"{block}\n"
+    if not stripped:
+        return f"{block}\n"
+
+    lines = stripped.splitlines()
+    if lines and lines[0].startswith("#!"):
+        shebang = lines[0]
+        rest = "\n".join(lines[1:]).strip()
+        if rest:
+            return f"{shebang}\n\n{block}\n\n{rest}\n"
+        return f"{shebang}\n\n{block}\n"
+
+    return f"{block}\n\n{stripped}\n"
 
 
 def strip_managed_block(current: str) -> str:
