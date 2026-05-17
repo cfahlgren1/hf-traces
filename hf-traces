@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import runpy
+import shutil
+import sys
+import tempfile
+import urllib.request
+import zipfile
+from pathlib import Path
+
+
+DEFAULT_REPO = "cfahlgren1/hf-traces"
+DEFAULT_REF = "main"
+
+
+def main() -> None:
+    source = resolve_source()
+    sys.path.insert(0, str(source / "src"))
+    runpy.run_module("hf_traces.cli", run_name="__main__")
+
+
+def resolve_source() -> Path:
+    local_source = Path(__file__).resolve().parent
+    if (local_source / "src" / "hf_traces" / "cli.py").exists():
+        return local_source
+
+    override = os.environ.get("HF_TRACES_SOURCE_DIR")
+    if override:
+        source = Path(override).expanduser().resolve()
+        if (source / "src" / "hf_traces" / "cli.py").exists():
+            return source
+        raise SystemExit(
+            f"HF_TRACES_SOURCE_DIR does not contain hf-traces source: {source}"
+        )
+
+    return ensure_cached_source()
+
+
+def ensure_cached_source() -> Path:
+    repo = os.environ.get("HF_TRACES_REPO", DEFAULT_REPO)
+    ref = os.environ.get("HF_TRACES_REF", DEFAULT_REF)
+    cache_dir = Path(
+        os.environ.get(
+            "HF_TRACES_BOOTSTRAP_CACHE",
+            Path.home() / ".cache" / "hf-traces" / "bootstrap",
+        )
+    )
+    target = cache_dir / safe_path(repo) / safe_path(ref)
+
+    if (
+        os.environ.get("HF_TRACES_BOOTSTRAP_REFRESH") != "1"
+        and (target / "src" / "hf_traces" / "cli.py").exists()
+    ):
+        return target
+
+    with tempfile.TemporaryDirectory(prefix="hf-traces-bootstrap-") as temp_dir:
+        archive_path = Path(temp_dir) / "source.zip"
+        extract_dir = Path(temp_dir) / "extract"
+        download_archive(repo, ref, archive_path)
+        with zipfile.ZipFile(archive_path) as archive:
+            archive.extractall(extract_dir)
+
+        extracted_roots = [path for path in extract_dir.iterdir() if path.is_dir()]
+        if not extracted_roots:
+            raise SystemExit("Downloaded hf-traces archive was empty")
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.move(str(extracted_roots[0]), str(target))
+
+    return target
+
+
+def download_archive(repo: str, ref: str, archive_path: Path) -> None:
+    url = f"https://github.com/{repo}/archive/refs/heads/{ref}.zip"
+    try:
+        urllib.request.urlretrieve(url, archive_path)
+    except Exception as error:
+        raise SystemExit(
+            f"Failed to download hf-traces source from {url}: {error}"
+        ) from error
+
+
+def safe_path(value: str) -> str:
+    return "".join(
+        character if character.isalnum() or character in "._-" else "-"
+        for character in value
+    )
+
+
+if __name__ == "__main__":
+    main()
