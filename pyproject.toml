@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hf-traces"
+version = "0.1.0"
+description = "HF CLI extension for publishing coding-agent traces and attaching Git notes"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Caleb Fahlgren" }]
+keywords = ["huggingface", "agents", "traces", "git-notes"]
+
+[project.scripts]
+hf-traces = "hf_traces.cli:main"
+

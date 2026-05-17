@@ -1,0 +1,4 @@
+{
+  "description": "Publish coding-agent traces to HF buckets and attach Git notes"
+}
+
