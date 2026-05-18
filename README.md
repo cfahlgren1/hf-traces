@@ -1,6 +1,8 @@
 # hf-traces
 
-`hf-traces` is a small Hugging Face CLI extension for saving agent traces to a private HF bucket and leaving a Git note on the next commit.
+![every commit linked to the agent conversation that made it](docs/hf-traces-trace-lookup.png)
+
+`hf-traces` is a small Hugging Face CLI extension for saving agent traces to a private HF bucket and leaving a Git note on the next commit. Months later, you (or another agent) can pull up the exact conversation that produced any commit.
 
 ```sh
 hf extensions install cfahlgren1/hf-traces
