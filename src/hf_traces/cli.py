@@ -6,11 +6,16 @@ from typing import Iterable, Optional
 
 from . import __version__
 from .config import Config, config_path, load_config, write_config
-from .hooks import handle_agent_stop, handle_git_post_commit, latest_state
+from .hooks import (
+    handle_agent_record,
+    handle_agent_stop,
+    handle_git_post_commit,
+    latest_state,
+)
 from .installers import (
     check_status,
-    install_claude_hook,
-    install_codex_hook,
+    install_claude_hooks,
+    install_codex_hooks,
     install_git_hook,
     uninstall_claude_hook,
     uninstall_codex_hook,
@@ -97,11 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     codex = hook_subparsers.add_parser("codex", help=argparse.SUPPRESS)
     codex_subparsers = codex.add_subparsers(dest="hook_event", required=True)
+    codex_record = codex_subparsers.add_parser("record", help=argparse.SUPPRESS)
+    codex_record.set_defaults(func=lambda _args: handle_agent_record("codex"))
     codex_stop = codex_subparsers.add_parser("stop", help=argparse.SUPPRESS)
     codex_stop.set_defaults(func=lambda _args: handle_agent_stop("codex"))
 
     claude = hook_subparsers.add_parser("claude", help=argparse.SUPPRESS)
     claude_subparsers = claude.add_subparsers(dest="hook_event", required=True)
+    claude_record = claude_subparsers.add_parser("record", help=argparse.SUPPRESS)
+    claude_record.set_defaults(func=lambda _args: handle_agent_record("claude"))
     claude_stop = claude_subparsers.add_parser("stop", help=argparse.SUPPRESS)
     claude_stop.set_defaults(func=lambda _args: handle_agent_stop("claude"))
 
@@ -133,9 +142,9 @@ def setup_command(args: argparse.Namespace) -> int:
     results.append(write_config(next_config, dry_run=args.dry_run))
 
     if "codex" in agents:
-        results.append(install_codex_hook(dry_run=args.dry_run))
+        results.extend(install_codex_hooks(dry_run=args.dry_run))
     if "claude" in agents:
-        results.append(install_claude_hook(dry_run=args.dry_run))
+        results.extend(install_claude_hooks(dry_run=args.dry_run))
     if args.git != "none":
         results.extend(
             install_git_hook(args.git, next_config.note_ref, dry_run=args.dry_run)

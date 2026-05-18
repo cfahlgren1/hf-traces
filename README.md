@@ -31,7 +31,9 @@ hf traces doctor
 Internal hook commands are installed by `setup`:
 
 ```sh
+hf traces hook codex record
 hf traces hook codex stop
+hf traces hook claude record
 hf traces hook claude stop
 hf traces hook git post-commit
 ```

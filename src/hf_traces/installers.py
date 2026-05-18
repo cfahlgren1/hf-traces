@@ -15,6 +15,7 @@ CODEX_HOOK_PATH = Path.home() / ".codex" / "hooks.json"
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 MANAGED_START = "# >>> hf-traces"
 MANAGED_END = "# <<< hf-traces"
+LEGACY_JSON_HOOK_SNIPPETS = ("hf-traces-active.json",)
 
 
 def hook_entrypoint() -> str:
@@ -40,46 +41,93 @@ def codex_stop_command() -> str:
     return hook_command("hook", "codex", "stop")
 
 
+def codex_record_command() -> str:
+    return hook_command("hook", "codex", "record")
+
+
 def claude_stop_command() -> str:
     return hook_command("hook", "claude", "stop")
+
+
+def claude_record_command() -> str:
+    return hook_command("hook", "claude", "record")
 
 
 def git_post_commit_command() -> str:
     return hook_command("hook", "git", "post-commit")
 
 
-def install_codex_hook(dry_run: bool = False) -> str:
-    return install_json_hook(
-        CODEX_HOOK_PATH, "Stop", codex_stop_command(), dry_run=dry_run
-    )
+def install_codex_hooks(dry_run: bool = False) -> list[str]:
+    data = read_json_file(CODEX_HOOK_PATH)
+    remove_legacy_json_commands(data)
+    results = [
+        install_json_hook_data(
+            data, CODEX_HOOK_PATH, "SessionStart", codex_record_command()
+        ),
+        install_json_hook_data(
+            data, CODEX_HOOK_PATH, "UserPromptSubmit", codex_record_command()
+        ),
+        install_json_hook_data(data, CODEX_HOOK_PATH, "Stop", codex_stop_command()),
+    ]
+    if not dry_run:
+        write_json_file(CODEX_HOOK_PATH, data)
+    return results
 
 
-def install_claude_hook(dry_run: bool = False) -> str:
-    return install_json_hook(
-        CLAUDE_SETTINGS_PATH, "Stop", claude_stop_command(), dry_run=dry_run
-    )
+def install_claude_hooks(dry_run: bool = False) -> list[str]:
+    data = read_json_file(CLAUDE_SETTINGS_PATH)
+    remove_legacy_json_commands(data)
+    results = [
+        install_json_hook_data(
+            data, CLAUDE_SETTINGS_PATH, "UserPromptSubmit", claude_record_command()
+        ),
+        install_json_hook_data(
+            data, CLAUDE_SETTINGS_PATH, "Stop", claude_stop_command()
+        ),
+    ]
+    if not dry_run:
+        write_json_file(CLAUDE_SETTINGS_PATH, data)
+    return results
 
 
 def uninstall_codex_hook(dry_run: bool = False) -> str:
-    return uninstall_json_hook(CODEX_HOOK_PATH, "hook codex stop", dry_run=dry_run)
+    data = read_json_file(CODEX_HOOK_PATH)
+    changed = remove_json_command(data, "hook codex stop")
+    changed = remove_json_command(data, "hook codex record") or changed
+    if changed and not dry_run:
+        write_json_file(CODEX_HOOK_PATH, data)
+    action = "remove hook" if changed else "keep missing hook"
+    return f"{action} {CODEX_HOOK_PATH}"
 
 
 def uninstall_claude_hook(dry_run: bool = False) -> str:
-    return uninstall_json_hook(
-        CLAUDE_SETTINGS_PATH, "hook claude stop", dry_run=dry_run
-    )
+    data = read_json_file(CLAUDE_SETTINGS_PATH)
+    changed = remove_json_command(data, "hook claude stop")
+    changed = remove_json_command(data, "hook claude record") or changed
+    if changed and not dry_run:
+        write_json_file(CLAUDE_SETTINGS_PATH, data)
+    action = "remove hook" if changed else "keep missing hook"
+    return f"{action} {CLAUDE_SETTINGS_PATH}"
 
 
 def install_json_hook(
     path: Path, event: str, command: str, dry_run: bool = False
 ) -> str:
-    suffix = hook_suffix(command)
     data = read_json_file(path)
-    if json_has_command(data, command):
+    result = install_json_hook_data(data, path, event, command)
+    if not dry_run:
+        write_json_file(path, data)
+    return result
+
+
+def install_json_hook_data(
+    data: dict[str, Any], path: Path, event: str, command: str
+) -> str:
+    suffix = hook_suffix(command)
+    if json_has_command(data, command, event=event):
         return f"keep existing hook {path}"
 
-    remove_json_command(data, suffix)
-
+    remove_json_command(data, suffix, event=event)
     data.setdefault("hooks", {}).setdefault(event, []).append(
         {
             "hooks": [
@@ -90,9 +138,6 @@ def install_json_hook(
             ]
         }
     )
-
-    if not dry_run:
-        write_json_file(path, data)
     return f"install hook {path}"
 
 
@@ -211,8 +256,14 @@ def uninstall_git_hook(scope: str, dry_run: bool = False) -> str:
 
 def check_status(note_ref: str, git_scope: str = "local") -> dict[str, bool]:
     status = {
+        "codex record hook": json_has_command(
+            read_json_file(CODEX_HOOK_PATH), codex_record_command()
+        ),
         "codex stop hook": json_has_command(
             read_json_file(CODEX_HOOK_PATH), codex_stop_command()
+        ),
+        "claude record hook": json_has_command(
+            read_json_file(CLAUDE_SETTINGS_PATH), claude_record_command()
         ),
         "claude stop hook": json_has_command(
             read_json_file(CLAUDE_SETTINGS_PATH), claude_stop_command()
@@ -256,12 +307,15 @@ def write_json_file(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def json_has_command(data: dict[str, Any], command: str) -> bool:
+def json_has_command(
+    data: dict[str, Any], command: str, event: Optional[str] = None
+) -> bool:
     hooks = data.get("hooks", {})
     if not isinstance(hooks, dict):
         return False
 
-    for groups in hooks.values():
+    hook_items = [(event, hooks.get(event, []))] if event else hooks.items()
+    for _event, groups in hook_items:
         if not isinstance(groups, list):
             continue
         for group in groups:
@@ -271,7 +325,39 @@ def json_has_command(data: dict[str, Any], command: str) -> bool:
     return False
 
 
-def remove_json_command(data: dict[str, Any], suffix: str) -> bool:
+def remove_json_command(
+    data: dict[str, Any], suffix: str, event: Optional[str] = None
+) -> bool:
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return False
+
+    changed = False
+    hook_items = [(event, hooks.get(event, []))] if event else list(hooks.items())
+    for hook_event, groups in hook_items:
+        if not isinstance(groups, list):
+            continue
+        next_groups = []
+        for group in groups:
+            group_hooks = group.get("hooks", [])
+            next_hooks = [
+                hook
+                for hook in group_hooks
+                if not str(hook.get("command", "")).endswith(suffix)
+            ]
+            if len(next_hooks) != len(group_hooks):
+                changed = True
+            if next_hooks:
+                group["hooks"] = next_hooks
+                next_groups.append(group)
+        if next_groups:
+            hooks[hook_event] = next_groups
+        else:
+            hooks.pop(hook_event, None)
+    return changed
+
+
+def remove_legacy_json_commands(data: dict[str, Any]) -> bool:
     hooks = data.get("hooks", {})
     if not isinstance(hooks, dict):
         return False
@@ -286,7 +372,10 @@ def remove_json_command(data: dict[str, Any], suffix: str) -> bool:
             next_hooks = [
                 hook
                 for hook in group_hooks
-                if not str(hook.get("command", "")).endswith(suffix)
+                if not any(
+                    snippet in str(hook.get("command", ""))
+                    for snippet in LEGACY_JSON_HOOK_SNIPPETS
+                )
             ]
             if len(next_hooks) != len(group_hooks):
                 changed = True

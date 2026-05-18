@@ -15,28 +15,36 @@ from urllib.parse import quote
 from .config import Config, load_config
 
 
+def handle_agent_record(agent: str) -> int:
+    try:
+        payload = read_stdin_json()
+        config = load_config()
+        state_context = state_from_payload(config, agent, payload)
+        if state_context is None:
+            return 0
+
+        repo, state = state_context
+        write_state(repo.state_path, preserve_existing_note_state(repo, state))
+    except Exception as error:  # pragma: no cover - hooks should never break the agent
+        warn(str(error))
+    return 0
+
+
 def handle_agent_stop(agent: str) -> int:
     try:
         payload = read_stdin_json()
         config = load_config()
-        if agent not in config.agents:
+        state_context = state_from_payload(config, agent, payload)
+        if state_context is None:
             return 0
 
-        transcript_path = transcript_from_payload(payload)
-        cwd = Path(str(payload.get("cwd") or os.getcwd())).expanduser()
-        session_id = str(payload.get("session_id") or transcript_path.stem)
-
-        if not config.bucket:
-            warn("bucket is not configured")
-            return 0
+        repo, state = state_context
+        transcript_path = Path(str(state["trace_path"])).expanduser()
         if not transcript_path.exists():
             warn(f"trace file does not exist: {transcript_path}")
             return 0
 
-        repo = repo_context(cwd)
-        if repo is None:
-            return 0
-
+        session_id = str(state.get("session_id") or transcript_path.stem)
         state = publish_trace(config, repo, transcript_path, agent, session_id)
         if state:
             write_state(repo.state_path, preserve_existing_note_state(repo, state))
@@ -150,6 +158,38 @@ def publish_state_trace(
     agent = str(state.get("agent") or "codex")
     session_id = str(state.get("session_id") or trace_path.stem)
     return publish_trace(config, repo, trace_path, agent, session_id)
+
+
+def state_from_payload(
+    config: Config, agent: str, payload: dict[str, object]
+) -> Optional[tuple["RepoContext", dict[str, object]]]:
+    if agent not in config.agents or not config.bucket:
+        return None
+
+    try:
+        transcript_path = transcript_from_payload(payload)
+    except ValueError:
+        return None
+
+    cwd = Path(str(payload.get("cwd") or os.getcwd())).expanduser()
+    session_id = str(payload.get("session_id") or transcript_path.stem)
+    repo = repo_context(cwd)
+    if repo is None:
+        return None
+
+    bucket = normalize_bucket(config.bucket)
+    bucket_path = bucket_path_for(repo, agent, session_id)
+    state = build_state(
+        config,
+        repo,
+        transcript_path,
+        agent,
+        session_id,
+        bucket,
+        bucket_path,
+        uploaded=False,
+    )
+    return repo, state
 
 
 def discover_codex_state(
