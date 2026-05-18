@@ -166,12 +166,16 @@ def install_git_hook(scope: str, note_ref: str, dry_run: bool = False) -> list[s
     config_args = ["git", "config"]
     if scope == "global":
         config_args.append("--global")
+    elif scope == "local":
+        config_args.append("--local")
     config_args.extend(["--get-all", "notes.displayRef"])
     current_refs = run(config_args, check=False).stdout.splitlines()
     if note_ref not in current_refs:
         set_args = ["git", "config"]
         if scope == "global":
             set_args.append("--global")
+        elif scope == "local":
+            set_args.append("--local")
         set_args.extend(["--add", "notes.displayRef", note_ref])
         if not dry_run:
             run(set_args)
@@ -220,7 +224,10 @@ def check_status(note_ref: str, git_scope: str = "local") -> dict[str, bool]:
             hook_path = local_post_commit_path()
         except subprocess.CalledProcessError:
             hook_path = None
-        refs = run(["git", "config", "--get-all", "notes.displayRef"], check=False)
+        refs = run(
+            ["git", "config", "--local", "--get-all", "notes.displayRef"],
+            check=False,
+        )
     else:
         hook_path, _created_global_path = global_post_commit_path()
         effective_hook_path = effective_post_commit_path()
