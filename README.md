@@ -12,6 +12,7 @@ After setup:
 1. Codex or Claude Code finishes a turn.
 2. The agent hook uploads the session JSONL to your HF bucket.
 3. The Git `post-commit` hook attaches the trace URL to the new commit with `git notes`.
+4. The Git hook also schedules a short delayed refresh of the same JSONL, so commits made before the agent turn fully stops still get the final trace tail when possible.
 
 The bucket stores only the raw trace JSONL. The repository stores only a small pointer like:
 

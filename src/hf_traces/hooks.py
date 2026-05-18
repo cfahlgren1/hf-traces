@@ -14,6 +14,8 @@ from urllib.parse import quote
 
 from .config import Config, load_config
 
+DELAYED_REFRESH_SECONDS = 10.0
+
 
 def handle_agent_record(agent: str) -> int:
     try:
@@ -105,7 +107,32 @@ def handle_git_post_commit() -> int:
         state["noted_commit"] = head
         state["noted_at"] = now_iso()
         write_state(repo.state_path, state)
+        schedule_delayed_state_refresh(repo.state_path)
     except Exception as error:  # pragma: no cover - post-commit should stay best-effort
+        warn(str(error))
+    return 0
+
+
+def handle_git_refresh_state(
+    state_path: Path, delay_seconds: float = DELAYED_REFRESH_SECONDS
+) -> int:
+    try:
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+        config = load_config()
+        state = read_state(state_path)
+        if not state:
+            return 0
+
+        repo = repo_context(Path(str(state.get("cwd") or os.getcwd())))
+        if repo is None:
+            return 0
+
+        refreshed = publish_state_trace(config, repo, state)
+        if refreshed:
+            write_state(repo.state_path, preserve_existing_note_state(repo, refreshed))
+    except Exception as error:  # pragma: no cover - keep refresh best-effort
         warn(str(error))
     return 0
 
@@ -158,6 +185,28 @@ def publish_state_trace(
     agent = str(state.get("agent") or "codex")
     session_id = str(state.get("session_id") or trace_path.stem)
     return publish_trace(config, repo, trace_path, agent, session_id)
+
+
+def schedule_delayed_state_refresh(state_path: Path) -> None:
+    entrypoint = Path(sys.argv[0] or "")
+    if not entrypoint.is_file():
+        return
+
+    try:
+        subprocess.Popen(
+            [
+                str(entrypoint),
+                "hook",
+                "git",
+                "refresh-state",
+                str(state_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        return
 
 
 def state_from_payload(

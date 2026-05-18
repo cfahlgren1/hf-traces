@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Iterable, Optional
 
 from . import __version__
@@ -10,6 +11,7 @@ from .hooks import (
     handle_agent_record,
     handle_agent_stop,
     handle_git_post_commit,
+    handle_git_refresh_state,
     latest_state,
 )
 from .installers import (
@@ -118,6 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     git_subparsers = git.add_subparsers(dest="hook_event", required=True)
     git_post_commit = git_subparsers.add_parser("post-commit", help=argparse.SUPPRESS)
     git_post_commit.set_defaults(func=lambda _args: handle_git_post_commit())
+    git_refresh_state = git_subparsers.add_parser(
+        "refresh-state", help=argparse.SUPPRESS
+    )
+    git_refresh_state.add_argument("state_path")
+    git_refresh_state.add_argument("--delay", type=float, default=10.0)
+    git_refresh_state.set_defaults(
+        func=lambda args: handle_git_refresh_state(Path(args.state_path), args.delay)
+    )
 
     return parser
 
