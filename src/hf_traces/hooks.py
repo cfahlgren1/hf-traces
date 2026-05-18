@@ -33,26 +33,7 @@ def handle_agent_record(agent: str) -> int:
 
 
 def handle_agent_stop(agent: str) -> int:
-    try:
-        payload = read_stdin_json()
-        config = load_config()
-        state_context = state_from_payload(config, agent, payload)
-        if state_context is None:
-            return 0
-
-        repo, state = state_context
-        transcript_path = Path(str(state["trace_path"])).expanduser()
-        if not transcript_path.exists():
-            warn(f"trace file does not exist: {transcript_path}")
-            return 0
-
-        session_id = str(state.get("session_id") or transcript_path.stem)
-        state = publish_trace(config, repo, transcript_path, agent, session_id)
-        if state:
-            write_state(repo.state_path, preserve_existing_note_state(repo, state))
-    except Exception as error:  # pragma: no cover - hooks should never break the agent
-        warn(str(error))
-    return 0
+    return handle_agent_record(agent)
 
 
 def handle_git_post_commit() -> int:
@@ -74,11 +55,10 @@ def handle_git_post_commit() -> int:
         if state.get("consumed") and state.get("noted_commit") == head:
             return 0
 
-        if not state.get("uploaded"):
-            state = publish_state_trace(config, repo, state)
-            if not state:
-                return 0
-            write_state(repo.state_path, state)
+        state = publish_state_trace(config, repo, state)
+        if not state:
+            return 0
+        write_state(repo.state_path, state)
 
         trace_url = state.get("trace_url")
         if not trace_url:

@@ -7,18 +7,24 @@ hf extensions install cfahlgren1/hf-traces
 hf traces setup --bucket <namespace>/agent-traces --agents codex,claude
 ```
 
-After setup:
+After setup, the upload is driven by `git commit`. Agent hooks only record where the session JSONL lives; the post-commit hook uploads it to the bucket, attaches the trace URL as a git note, and schedules a short refresh so the trailing JSONL written after the commit still lands in the bucket:
 
-1. Codex or Claude Code finishes a turn.
-2. The agent hook uploads the session JSONL to your HF bucket.
-3. The Git `post-commit` hook attaches the trace URL to the new commit with `git notes`.
-4. The Git hook also schedules a short delayed refresh of the same JSONL, so commits made before the agent turn fully stops still get the final trace tail when possible.
+![hf-traces flow: agent records, commit uploads](docs/hf-traces-flow.png)
 
 The bucket stores only the raw trace JSONL. The repository stores only a small pointer like:
 
 ```txt
 Agent-Trace: https://huggingface.co/buckets/<namespace>/agent-traces/tree/<repo>/<branch>/sessions/<agent>-<session>.jsonl
 ```
+
+## Sessions and commits
+
+Traces are keyed by agent `session_id`, not by commit. All commits made during
+the same Claude or Codex session share one trace URL, and the JSONL on HF is
+overwritten in place as the session grows. A new session produces a new URL.
+
+Each Git worktree has its own state file (under that worktree's `.git`
+directory) and usually its own branch, so worktrees get independent traces.
 
 ## Commands
 
