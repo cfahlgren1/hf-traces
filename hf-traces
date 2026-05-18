@@ -13,6 +13,8 @@ from pathlib import Path
 
 DEFAULT_REPO = "cfahlgren1/hf-traces"
 DEFAULT_REF = "main"
+BOOTSTRAP_CACHE_VERSION = "2026-05-17-project-hooks"
+BOOTSTRAP_VERSION_FILE = ".hf-traces-bootstrap-version"
 
 
 def main() -> None:
@@ -52,6 +54,7 @@ def ensure_cached_source() -> Path:
     if (
         os.environ.get("HF_TRACES_BOOTSTRAP_REFRESH") != "1"
         and (target / "src" / "hf_traces" / "cli.py").exists()
+        and cached_source_is_current(target)
     ):
         return target
 
@@ -70,8 +73,18 @@ def ensure_cached_source() -> Path:
         if target.exists():
             shutil.rmtree(target)
         shutil.move(str(extracted_roots[0]), str(target))
+        (target / BOOTSTRAP_VERSION_FILE).write_text(
+            BOOTSTRAP_CACHE_VERSION + "\n", encoding="utf-8"
+        )
 
     return target
+
+
+def cached_source_is_current(target: Path) -> bool:
+    version_path = target / BOOTSTRAP_VERSION_FILE
+    if not version_path.exists():
+        return False
+    return version_path.read_text(encoding="utf-8").strip() == BOOTSTRAP_CACHE_VERSION
 
 
 def download_archive(repo: str, ref: str, archive_path: Path) -> None:
