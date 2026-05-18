@@ -20,7 +20,7 @@ class Config:
     bucket: str = ""
     agents: list[str] = field(default_factory=lambda: ["codex", "claude"])
     note_ref: str = DEFAULT_NOTE_REF
-    git_scope: str = "global"
+    git_scope: str = "local"
     dry_run: bool = False
 
 
@@ -42,7 +42,7 @@ def load_config(path: Optional[Path] = None) -> Config:
         bucket=str(data.get("bucket", "")),
         agents=parse_agents_value(data.get("agents", ["codex", "claude"])),
         note_ref=str(data.get("note_ref", DEFAULT_NOTE_REF)),
-        git_scope=str(data.get("git_scope", "global")),
+        git_scope=str(data.get("git_scope", "local")),
         dry_run=bool(data.get("dry_run", False)),
     )
 

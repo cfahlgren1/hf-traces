@@ -146,6 +146,22 @@ def install_git_hook(scope: str, note_ref: str, dry_run: bool = False) -> list[s
                     dry_run=dry_run,
                 )
             )
+    elif scope == "local":
+        configured_path = run(
+            ["git", "config", "--get", "core.hooksPath"], check=False
+        ).stdout.strip()
+        if configured_path and resolve_hooks_path(configured_path) != hook_path.parent:
+            if not dry_run:
+                run(
+                    [
+                        "git",
+                        "config",
+                        "--local",
+                        "core.hooksPath",
+                        str(hook_path.parent),
+                    ]
+                )
+            results.append(f"set local core.hooksPath {hook_path.parent}")
 
     config_args = ["git", "config"]
     if scope == "global":
@@ -175,11 +191,21 @@ def uninstall_git_hook(scope: str, dry_run: bool = False) -> str:
         return "skip git hook"
 
     changed = remove_managed_block(hook_path, dry_run=dry_run)
+    if scope == "local":
+        configured_path = run(
+            ["git", "config", "--local", "--get", "core.hooksPath"], check=False
+        ).stdout.strip()
+        if (
+            configured_path
+            and resolve_hooks_path(configured_path) == hook_path.parent
+            and not dry_run
+        ):
+            run(["git", "config", "--local", "--unset", "core.hooksPath"], check=False)
     action = "remove git hook block" if changed else "keep missing git hook block"
     return f"{action} {hook_path}"
 
 
-def check_status(note_ref: str, git_scope: str = "global") -> dict[str, bool]:
+def check_status(note_ref: str, git_scope: str = "local") -> dict[str, bool]:
     status = {
         "codex stop hook": json_has_command(
             read_json_file(CODEX_HOOK_PATH), codex_stop_command()
@@ -277,16 +303,21 @@ def global_post_commit_path() -> tuple[Path, bool]:
 
 
 def local_post_commit_path() -> Path:
-    result = run(
-        [
-            "git",
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            "hooks/post-commit",
-        ]
-    )
-    return Path(result.stdout.strip())
+    return local_hooks_dir() / "post-commit"
+
+
+def local_hooks_dir() -> Path:
+    result = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"])
+    return Path(result.stdout.strip()) / "hooks"
+
+
+def resolve_hooks_path(value: str) -> Path:
+    path = Path(os.path.expanduser(value))
+    if not path.is_absolute():
+        root = run(["git", "rev-parse", "--show-toplevel"], check=False).stdout.strip()
+        if root:
+            path = Path(root) / path
+    return path.resolve()
 
 
 def effective_post_commit_path() -> Optional[Path]:

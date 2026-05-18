@@ -47,8 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument(
         "--git",
         choices=("global", "local", "none"),
-        default="global",
-        help="Install Git hook globally, in the current repo, or not at all.",
+        default="local",
+        help="Install Git hook in the current repo, globally, or not at all.",
     )
     setup.add_argument(
         "--note-ref",
@@ -84,8 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument(
         "--git",
         choices=("global", "local", "none"),
-        default="global",
-        help="Remove Git hook globally, in the current repo, or not at all.",
+        default="local",
+        help="Remove Git hook from the current repo, globally, or not at all.",
     )
     uninstall.add_argument(
         "--dry-run", action="store_true", help="Show changes without writing files."

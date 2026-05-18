@@ -4,7 +4,7 @@
 
 ```sh
 hf extensions install cfahlgren1/hf-traces
-hf traces setup --bucket <namespace>/agent-traces --agents codex,claude --git global
+hf traces setup --bucket <namespace>/agent-traces --agents codex,claude
 ```
 
 After setup:
@@ -22,7 +22,7 @@ Agent-Trace: https://huggingface.co/buckets/<namespace>/agent-traces/tree/<repo>
 ## Commands
 
 ```sh
-hf traces setup --bucket cfahlgren1/agent-traces --agents codex,claude --git global
+hf traces setup --bucket cfahlgren1/agent-traces --agents codex,claude
 hf traces status
 hf traces latest
 hf traces doctor
@@ -60,4 +60,3 @@ The upload path is:
 ```txt
 hf://buckets/<namespace>/agent-traces/<repo>/<branch>/sessions/<agent>-<session>.jsonl
 ```
-
