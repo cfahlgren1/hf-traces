@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -38,7 +39,7 @@ def handle_agent_stop(agent: str) -> int:
 
         state = publish_trace(config, repo, transcript_path, agent, session_id)
         if state:
-            write_state(repo.state_path, state)
+            write_state(repo.state_path, preserve_existing_note_state(repo, state))
     except Exception as error:  # pragma: no cover - hooks should never break the agent
         warn(str(error))
     return 0
@@ -51,15 +52,28 @@ def handle_git_post_commit() -> int:
         if repo is None:
             return 0
 
+        head = git(["rev-parse", "HEAD"], repo.root).stdout.strip()
         state = read_state(repo.state_path)
-        if not state or state.get("consumed"):
+        if not state:
+            state = discover_codex_state(config, repo)
+            if state:
+                write_state(repo.state_path, state)
+
+        if not state:
             return 0
+        if state.get("consumed") and state.get("noted_commit") == head:
+            return 0
+
+        if not state.get("uploaded"):
+            state = publish_state_trace(config, repo, state)
+            if not state:
+                return 0
+            write_state(repo.state_path, state)
 
         trace_url = state.get("trace_url")
         if not trace_url:
             return 0
 
-        head = git(["rev-parse", "HEAD"], repo.root).stdout.strip()
         note_message = f"Agent-Trace: {trace_url}"
         existing_note = git(
             ["notes", f"--ref={config.note_ref}", "show", "HEAD"],
@@ -103,14 +117,7 @@ def publish_trace(
     session_id: str,
 ) -> Optional[dict[str, object]]:
     bucket = normalize_bucket(config.bucket)
-    bucket_path = "/".join(
-        [
-            repo.name,
-            repo.branch,
-            "sessions",
-            f"{agent}-{safe_path_component(session_id)}.jsonl",
-        ]
-    )
+    bucket_path = bucket_path_for(repo, agent, session_id)
     destination = f"hf://buckets/{bucket}/{bucket_path}"
     dry_run = config.dry_run or os.environ.get("HF_TRACES_DRY_RUN") == "1"
 
@@ -129,6 +136,109 @@ def publish_trace(
         bucket,
         bucket_path,
         uploaded=not dry_run,
+    )
+
+
+def publish_state_trace(
+    config: Config, repo: "RepoContext", state: dict[str, object]
+) -> Optional[dict[str, object]]:
+    trace_path = Path(str(state.get("trace_path") or "")).expanduser()
+    if not trace_path.exists():
+        warn(f"trace file does not exist: {trace_path}")
+        return None
+
+    agent = str(state.get("agent") or "codex")
+    session_id = str(state.get("session_id") or trace_path.stem)
+    return publish_trace(config, repo, trace_path, agent, session_id)
+
+
+def discover_codex_state(
+    config: Config, repo: "RepoContext"
+) -> Optional[dict[str, object]]:
+    if "codex" not in config.agents:
+        return None
+
+    for trace_path in recent_codex_session_paths():
+        session_meta = read_codex_session_meta(trace_path)
+        if not session_meta:
+            continue
+
+        cwd_value = session_meta.get("cwd")
+        if not cwd_value or not path_is_inside_repo(Path(str(cwd_value)), repo.root):
+            continue
+
+        session_id = str(session_meta.get("id") or trace_path.stem)
+        return publish_trace(config, repo, trace_path, "codex", session_id)
+
+    return None
+
+
+def recent_codex_session_paths(max_age_seconds: int = 24 * 60 * 60) -> list[Path]:
+    sessions_root = Path.home() / ".codex" / "sessions"
+    if not sessions_root.exists():
+        return []
+
+    cutoff = time.time() - max_age_seconds
+    candidates = []
+    for path in sessions_root.rglob("*.jsonl"):
+        try:
+            modified_at = path.stat().st_mtime
+        except OSError:
+            continue
+        if modified_at >= cutoff:
+            candidates.append((modified_at, path))
+
+    return [path for _modified_at, path in sorted(candidates, reverse=True)]
+
+
+def read_codex_session_meta(path: Path) -> Optional[dict[str, object]]:
+    try:
+        with path.open("r", encoding="utf-8") as trace_file:
+            row = json.loads(trace_file.readline())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if row.get("type") != "session_meta":
+        return None
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def path_is_inside_repo(path: Path, repo_root: Path) -> bool:
+    try:
+        resolved_path = path.expanduser().resolve(strict=False)
+        resolved_root = repo_root.resolve(strict=False)
+    except OSError:
+        return False
+    return resolved_path == resolved_root or resolved_root in resolved_path.parents
+
+
+def preserve_existing_note_state(
+    repo: "RepoContext", state: dict[str, object]
+) -> dict[str, object]:
+    existing = read_state(repo.state_path)
+    if not existing or not existing.get("consumed"):
+        return state
+    if existing.get("session_id") != state.get("session_id"):
+        return state
+
+    state["consumed"] = True
+    for key in ("noted_commit", "noted_at"):
+        if key in existing:
+            state[key] = existing[key]
+    return state
+
+
+def bucket_path_for(repo: "RepoContext", agent: str, session_id: str) -> str:
+    return "/".join(
+        [
+            repo.name,
+            repo.branch,
+            "sessions",
+            f"{agent}-{safe_path_component(session_id)}.jsonl",
+        ]
     )
 
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 DEFAULT_REPO = "cfahlgren1/hf-traces"
 DEFAULT_REF = "main"
-BOOTSTRAP_CACHE_VERSION = "2026-05-17-local-notes"
+BOOTSTRAP_CACHE_VERSION = "2026-05-17-discover-codex-sessions"
 BOOTSTRAP_VERSION_FILE = ".hf-traces-bootstrap-version"
 
 
